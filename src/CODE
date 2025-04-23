@@ -1,0 +1,184 @@
+#include <Arduino.h>
+#include <ESP32Servo.h>
+#include "BluetoothSerial.h"
+
+// ----- Pin Definitions -----
+const int servoPin1 = 12;
+const int servoPin2 = 14;
+const int trigPin = 5;
+const int echoPin = 18;
+const int motor1_dir = 25;
+const int motor1_pwm = 32;
+const int motor2_dir = 27;
+const int motor2_pwm = 4;
+const int launchPin = 13; // Change to your preferred GPIO
+
+
+// ----- PWM Settings -----
+const int pwmFreq = 20000;   // 20 kHz
+const int pwmResolution = 8; // 8-bit (0-255)
+const int pwmChannel1 = 0;   // For reference only
+const int pwmChannel2 = 1;
+
+// ----- Servo -----
+Servo servo1, servo2;
+int angle = 0;
+int step = 1;
+bool servoEnabled = true;    // Can be toggled by Bluetooth
+bool servoMoving = true;
+
+// ----- Ultrasonic -----
+const int stopDistanceCm = 20;
+
+// ----- Motor Control -----
+int speedLeft = 200;
+int speedRight = 200;
+enum CarState {CAR_STOP, CAR_FORWARD, CAR_BACKWARD};
+CarState carState = CAR_STOP;
+
+// ----- Bluetooth -----
+BluetoothSerial SerialBT;
+
+// ----- Setup -----
+void setup() {
+  Serial.begin(115200);
+  SerialBT.begin("ESP32_CarBot");
+  Serial.println("Bluetooth started! Commands: F/B/S/Lxxx/Rxxx/SV/SP");
+
+  pinMode(launchPin, OUTPUT);
+  digitalWrite(launchPin, LOW);
+
+  // Attach servos
+  servo1.attach(servoPin1);
+  servo2.attach(servoPin2);
+  servo1.write(0);
+  servo2.write(0);
+
+  // Ultrasonic pins
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  // Motor pins
+  pinMode(motor1_dir, OUTPUT);
+  pinMode(motor2_dir, OUTPUT);
+
+  // Setup PWM for motors (NEW API for ESP32 Core v3.x+)
+  ledcAttachChannel(motor1_pwm, pwmFreq, pwmResolution, pwmChannel1);
+  ledcAttachChannel(motor2_pwm, pwmFreq, pwmResolution, pwmChannel2);
+
+  stopMotors();
+}
+
+// ----- Ultrasonic Distance Measurement -----
+long readUltrasonicDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) return -1;
+  long distance = duration * 0.0343 / 2;
+  return distance;
+}
+
+// ----- Motor Control Functions -----
+void stopMotors() {
+  ledcWrite(motor1_pwm, 0);
+  ledcWrite(motor2_pwm, 0);
+  carState = CAR_STOP;
+}
+
+void forwardMotors() {
+  digitalWrite(motor1_dir, HIGH);
+  digitalWrite(motor2_dir, HIGH);
+  ledcWrite(motor1_pwm, speedLeft);
+  ledcWrite(motor2_pwm, speedRight);
+  carState = CAR_FORWARD;
+}
+
+void backwardMotors() {
+  digitalWrite(motor1_dir, LOW);
+  digitalWrite(motor2_dir, LOW);
+  ledcWrite(motor1_pwm, speedLeft);
+  ledcWrite(motor2_pwm, speedRight);
+  carState = CAR_BACKWARD;
+}
+
+// ----- Bluetooth Command Processing -----
+void processBluetoothCommand(String cmd) {
+  cmd.trim();
+  if (cmd.length() == 0) return;
+
+  if (cmd.equalsIgnoreCase("F")) {
+    forwardMotors();
+    SerialBT.println("Car: Forward");
+  } else if (cmd.equalsIgnoreCase("B")) {
+    backwardMotors();
+    SerialBT.println("Car: Backward");
+  } else if (cmd.equalsIgnoreCase("S")) {
+    stopMotors();
+    SerialBT.println("Car: Stop");
+  } else if (cmd.startsWith("L")) {
+    int val = cmd.substring(1).toInt();
+    if (val >= 0 && val <= 255) {
+      speedLeft = val;
+      if (carState != CAR_STOP) ledcWrite(motor1_pwm, speedLeft);
+      SerialBT.println("Left motor speed set to " + String(speedLeft));
+    } else {
+      SerialBT.println("Invalid left motor speed (0-255)");
+    }
+  } else if (cmd.startsWith("R")) {
+    int val = cmd.substring(1).toInt();
+    if (val >= 0 && val <= 255) {
+      speedRight = val;
+      if (carState != CAR_STOP) ledcWrite(motor2_pwm, speedRight);
+      SerialBT.println("Right motor speed set to " + String(speedRight));
+    } else {
+      SerialBT.println("Invalid right motor speed (0-255)");
+    }
+  } else if (cmd.equalsIgnoreCase("SV")) {
+    servoEnabled = true;
+    SerialBT.println("Servo sweeping enabled");
+  } else if (cmd.equalsIgnoreCase("SP")) {
+    servoEnabled = false;
+    SerialBT.println("Servo sweeping stopped");
+  } else if (cmd.equalsIgnoreCase("launch")) {
+    digitalWrite(launchPin, HIGH);
+    SerialBT.println("Launch pin set HIGH");
+  }
+   else {
+    SerialBT.println("Unknown command");
+  }
+}
+
+// ----- Main Loop -----
+void loop() {
+  // Handle Bluetooth commands
+  if (SerialBT.available()) {
+    String cmd = SerialBT.readStringUntil('\n');
+    processBluetoothCommand(cmd);
+  }
+
+  // Read ultrasonic distance
+  long distance = readUltrasonicDistance();
+
+  // Servo logic: move if enabled and no object detected
+  if (servoEnabled && (distance < 0 || distance > stopDistanceCm)) {
+    servoMoving = true;
+  } else {
+    servoMoving = false;
+  }
+
+  // Sweep servos if allowed
+  if (servoMoving) {
+    servo1.write(90-angle);
+    servo2.write(angle);
+    angle += step;
+    if (angle >= 90 || angle <= 0) step = -step;
+    delay(30);
+  } else {
+    delay(50);
+  }
+}
