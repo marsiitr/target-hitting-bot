@@ -4,14 +4,14 @@
 
 // ----- Pin Definitions -----
 const int servoPin1 = 12;
-const int servoPin2 = 14;
 const int trigPin = 5;
 const int echoPin = 18;
 const int motor1_dir = 25;
 const int motor1_pwm = 32;
 const int motor2_dir = 27;
 const int motor2_pwm = 4;
-const int launchPin = 13; // Change to your preferred GPIO
+const int launchPin = 13; // For the MOSFET
+
 
 
 // ----- PWM Settings -----
@@ -21,17 +21,17 @@ const int pwmChannel1 = 0;   // For reference only
 const int pwmChannel2 = 1;
 
 // ----- Servo -----
-Servo servo1, servo2;
+Servo servo1;
 int angle = 0;
 int step = 1;
 bool servoEnabled = true;    // Can be toggled by Bluetooth
 bool servoMoving = true;
 
 // ----- Ultrasonic -----
-const int stopDistanceCm = 20;
+const int stopDistanceCm = 50; //An assumption
 
 // ----- Motor Control -----
-int speedLeft = 200;
+int speedLeft = 130;
 int speedRight = 200;
 enum CarState {CAR_STOP, CAR_FORWARD, CAR_BACKWARD};
 CarState carState = CAR_STOP;
@@ -48,11 +48,10 @@ void setup() {
   pinMode(launchPin, OUTPUT);
   digitalWrite(launchPin, LOW);
 
-  // Attach servos
+  // Attach servo
   servo1.attach(servoPin1);
-  servo2.attach(servoPin2);
   servo1.write(0);
-  servo2.write(0);
+  
 
   // Ultrasonic pins
   pinMode(trigPin, OUTPUT);
@@ -174,7 +173,6 @@ void loop() {
   // Sweep servos if allowed
   if (servoMoving) {
     servo1.write(90-angle);
-    servo2.write(angle);
     angle += step;
     if (angle >= 90 || angle <= 0) step = -step;
     delay(30);
